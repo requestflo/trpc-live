@@ -1,0 +1,128 @@
+{
+  "name": "@requestflo/trpc-live",
+  "version": "0.1.0",
+  "description": "Server-driven live invalidation for tRPC over one shared SSE connection.",
+  "type": "module",
+  "sideEffects": false,
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js",
+      "require": "./dist/client/index.cjs"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js",
+      "require": "./dist/server/index.cjs"
+    },
+    "./server/hono": {
+      "types": "./dist/server/hono/index.d.ts",
+      "import": "./dist/server/hono/index.js",
+      "require": "./dist/server/hono/index.cjs"
+    },
+    "./server/redis": {
+      "types": "./dist/server/redis/index.d.ts",
+      "import": "./dist/server/redis/index.js",
+      "require": "./dist/server/redis/index.cjs"
+    },
+    "./server/memory": {
+      "types": "./dist/server/memory/index.d.ts",
+      "import": "./dist/server/memory/index.js",
+      "require": "./dist/server/memory/index.cjs"
+    },
+    "./shared": {
+      "types": "./dist/shared/index.d.ts",
+      "import": "./dist/shared/index.js",
+      "require": "./dist/shared/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:types": "tsd",
+    "test:all": "pnpm typecheck && pnpm test && pnpm build && pnpm test:types",
+    "prepublishOnly": "pnpm test:all"
+  },
+  "tsd": {
+    "directory": "test/type",
+    "typingsFile": "src/index.ts",
+    "compilerOptions": {
+      "strict": true,
+      "jsx": "react-jsx",
+      "module": "esnext",
+      "target": "es2022",
+      "lib": [
+        "DOM",
+        "DOM.Iterable",
+        "ES2022"
+      ],
+      "esModuleInterop": true,
+      "skipLibCheck": true
+    }
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
+    "@trpc/client": "^11.0.0",
+    "@trpc/react-query": "^11.0.0",
+    "@trpc/server": "^11.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@trpc/client": {
+      "optional": true
+    },
+    "@trpc/react-query": {
+      "optional": true
+    },
+    "@trpc/server": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
+    "@trpc/client": "^11.0.0",
+    "@trpc/react-query": "^11.0.0",
+    "@trpc/server": "^11.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "hono": "^4.6.0",
+    "ioredis": "^5.4.0",
+    "jsdom": "^25.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tsd": "^0.31.2",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "zod": "^3.24.1"
+  }
+}
