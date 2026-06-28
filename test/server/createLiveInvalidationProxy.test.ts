@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createLiveInvalidationProxy } from "../../src/server";
+import { createLiveHub } from "../../src/server/hub";
 import type {
   PublishInvalidationInput,
   TrpcInvalidationTarget,
@@ -33,7 +34,6 @@ describe("createLiveInvalidationProxy", () => {
   it("creates a procedure target with no input", async () => {
     const { live, published } = setup();
     await live.response.list.invalidate();
-
     expect(published[0]?.targets).toEqual([
       { scope: "procedure", path: "response.list" },
     ]);
@@ -42,7 +42,6 @@ describe("createLiveInvalidationProxy", () => {
   it("creates a router target", async () => {
     const { live, published } = setup();
     await live.response.invalidate();
-
     expect(published[0]?.targets).toEqual([
       { scope: "router", path: "response" },
     ]);
@@ -51,7 +50,6 @@ describe("createLiveInvalidationProxy", () => {
   it("creates an all target", async () => {
     const { live, published } = setup();
     await live.invalidate();
-
     expect(published[0]?.targets).toEqual([{ scope: "all" }]);
   });
 
@@ -64,31 +62,6 @@ describe("createLiveInvalidationProxy", () => {
     expect(pathOf(published[1]?.targets[0])).toBe("dashboard.summary");
   });
 
-  it("includes a channel only when provided", async () => {
-    const { live, published } = setup();
-    await live.response.list.invalidate(
-      { requestId: "req_1" },
-      { channel: "org:org_1" },
-    );
-    expect(published[0]?.channel).toBe("org:org_1");
-  });
-
-  it("treats a missing channel as a global broadcast", async () => {
-    const { live, published } = setup();
-    await live.response.list.invalidate({ requestId: "req_1" });
-    expect(published[0]?.channel).toBeUndefined();
-  });
-
-  it("forwards actorId and skipActor options", async () => {
-    const { live, published } = setup();
-    await live.response.list.invalidate(
-      { requestId: "req_1" },
-      { actorId: "user_1", skipActor: true },
-    );
-    expect(published[0]?.actorId).toBe("user_1");
-    expect(published[0]?.skipActor).toBe(true);
-  });
-
   it("publishes an event for each invalidation outside a batch", async () => {
     const { live, publish } = setup();
     await live.response.list.invalidate({ requestId: "req_1" });
@@ -96,12 +69,16 @@ describe("createLiveInvalidationProxy", () => {
     expect(publish).toHaveBeenCalledTimes(2);
   });
 
-  it("supports invalidate(undefined, options) as a procedure target", async () => {
-    const { live, published } = setup();
-    await live.response.list.invalidate(undefined, { channel: "org:1" });
-    expect(published[0]?.targets).toEqual([
-      { scope: "procedure", path: "response.list" },
+  it("publishes through a hub to its subscribers", async () => {
+    const hub = createLiveHub();
+    const received: PublishInvalidationInput["targets"][] = [];
+    hub.subscribe((event) => received.push(event.targets));
+
+    const live = createLiveInvalidationProxy<AppRouter>({ hub });
+    await live.response.list.invalidate({ requestId: "req_1" });
+
+    expect(received).toEqual([
+      [{ scope: "query", path: "response.list", input: { requestId: "req_1" } }],
     ]);
-    expect(published[0]?.channel).toBe("org:1");
   });
 });

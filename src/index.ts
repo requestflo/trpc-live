@@ -1,6 +1,6 @@
 /**
- * Root entry. Re-exports the isomorphic shared types and constants so
- * `@requestflo/trpc-live` resolves to something meaningful. Import the
- * `client`, `server`, and adapter entry points for runtime code.
+ * Root entry. Re-exports the client API (the `liveLink` drop-in and cache
+ * helpers) plus the isomorphic shared types. Import `@requestflo/trpc-live/server`
+ * for the backend helpers.
  */
-export * from "./shared";
+export * from "./client";

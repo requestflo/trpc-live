@@ -3,14 +3,12 @@ export type {
   TrpcInvalidationScope,
   TrpcInvalidationTarget,
   TrpcLiveInvalidationEvent,
-  LiveInvalidateOptions,
   PublishInvalidationInput,
-  LivePubSubAdapter,
 } from "./types";
 
 export {
   TRPC_LIVE_EVENT_TYPE,
-  DEFAULT_PUBSUB_CHANNEL,
+  DEFAULT_LIVE_PATH,
   EVENT_ID_PREFIX,
 } from "./constants";
 

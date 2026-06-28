@@ -4,14 +4,18 @@ import { invalidateTarget } from "../../src/client/invalidateTarget";
 import { trpc } from "../fixtures/trpcClient";
 import { createTestQueryClient } from "../fixtures/queryClient";
 
-/** The exact key `trpc.X.useQuery(input)` would register. */
+// The exact key `trpc.X.useQuery(input)` would register — used to seed the
+// cache so we prove our path-derived key matches tRPC's.
 const keyFor = getQueryKey as unknown as (
   node: unknown,
   input?: unknown,
   type?: "query",
 ) => readonly unknown[];
 
-function isInvalidated(qc: ReturnType<typeof createTestQueryClient>, key: readonly unknown[]) {
+function isInvalidated(
+  qc: ReturnType<typeof createTestQueryClient>,
+  key: readonly unknown[],
+) {
   return qc.getQueryState(key)?.isInvalidated ?? false;
 }
 
@@ -20,11 +24,10 @@ describe("invalidateTarget", () => {
     const qc = createTestQueryClient();
     const matching = keyFor(trpc.response.list, { requestId: "r1" }, "query");
     const other = keyFor(trpc.response.list, { requestId: "r2" }, "query");
-    qc.setQueryData(matching, [{ id: "a" }]);
-    qc.setQueryData(other, [{ id: "b" }]);
+    qc.setQueryData(matching, []);
+    qc.setQueryData(other, []);
 
     invalidateTarget({
-      trpc,
       queryClient: qc,
       target: { scope: "query", path: "response.list", input: { requestId: "r1" } },
     });
@@ -41,7 +44,6 @@ describe("invalidateTarget", () => {
     qc.setQueryData(b, []);
 
     invalidateTarget({
-      trpc,
       queryClient: qc,
       target: { scope: "procedure", path: "response.list" },
     });
@@ -60,7 +62,6 @@ describe("invalidateTarget", () => {
     qc.setQueryData(unrelated, null);
 
     invalidateTarget({
-      trpc,
       queryClient: qc,
       target: { scope: "router", path: "response" },
     });
@@ -77,7 +78,7 @@ describe("invalidateTarget", () => {
     qc.setQueryData(a, []);
     qc.setQueryData(b, null);
 
-    invalidateTarget({ trpc, queryClient: qc, target: { scope: "all" } });
+    invalidateTarget({ queryClient: qc, target: { scope: "all" } });
 
     expect(isInvalidated(qc, a)).toBe(true);
     expect(isInvalidated(qc, b)).toBe(true);
@@ -88,36 +89,9 @@ describe("invalidateTarget", () => {
     const spy = vi.spyOn(qc, "invalidateQueries");
 
     expect(() =>
-      invalidateTarget({
-        trpc,
-        queryClient: qc,
-        // deliberately malformed
-        target: { scope: "bogus" } as never,
-      }),
+      invalidateTarget({ queryClient: qc, target: { scope: "bogus" } as never, debug: true }),
     ).not.toThrow();
 
     expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("invalidates multiple distinct query keys across multiple targets", () => {
-    const qc = createTestQueryClient();
-    const responses = keyFor(trpc.response.list, { requestId: "r1" }, "query");
-    const inbox = keyFor(trpc.inbox.list, { organisationId: "o" }, "query");
-    qc.setQueryData(responses, []);
-    qc.setQueryData(inbox, []);
-
-    invalidateTarget({
-      trpc,
-      queryClient: qc,
-      target: { scope: "query", path: "response.list", input: { requestId: "r1" } },
-    });
-    invalidateTarget({
-      trpc,
-      queryClient: qc,
-      target: { scope: "query", path: "inbox.list", input: { organisationId: "o" } },
-    });
-
-    expect(isInvalidated(qc, responses)).toBe(true);
-    expect(isInvalidated(qc, inbox)).toBe(true);
   });
 });

@@ -3,7 +3,7 @@ import { createLiveInvalidationProxy } from "../../src/server";
 import type { AppRouter } from "../fixtures/appRouter";
 
 const live = createLiveInvalidationProxy<AppRouter>({
-  publish: async () => {},
+  publish: () => {},
 });
 
 expectType<Promise<void>>(

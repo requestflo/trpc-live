@@ -1,29 +1,17 @@
-"use client";
+export { liveLink, createLiveOperationLink } from "./liveLink";
+export type {
+  LiveLinkOptions,
+  CreateLiveOperationLinkConfig,
+} from "./liveLink";
 
-export { TrpcLiveProvider } from "./TrpcLiveProvider";
-export { useTrpcLiveStatus } from "./useTrpcLiveStatus";
-export {
-  createTrpcLiveClient,
-  parseInvalidationEvent,
-  DEFAULT_RECONNECT_OPTIONS,
-} from "./createTrpcLiveClient";
-export { resolveTrpcPath } from "./resolveTrpcPath";
 export { invalidateTarget } from "./invalidateTarget";
 export type { InvalidateTargetArgs } from "./invalidateTarget";
 
-export type {
-  ReconnectOptions,
-  ReconnectBehaviour,
-  TrpcLiveStatus,
-  TrpcLiveStatusState,
-  TrpcLiveProviderProps,
-  TrpcLiveInvalidationEventListener,
-  TrpcLiveClient,
-  TrpcLiveClientConfig,
-  EventSourceLike,
-  EventSourceFactory,
-  EventSourceInit,
-} from "./types";
+export {
+  applyInvalidationEvent,
+  parseInvalidationEvent,
+} from "./applyInvalidationEvent";
+export type { ApplyInvalidationEventArgs } from "./applyInvalidationEvent";
 
 export type {
   TrpcInvalidationTarget,
@@ -31,4 +19,4 @@ export type {
   TrpcLiveInvalidationEvent,
 } from "../shared/types";
 
-export { TRPC_LIVE_EVENT_TYPE } from "../shared/constants";
+export { TRPC_LIVE_EVENT_TYPE, DEFAULT_LIVE_PATH } from "../shared/constants";

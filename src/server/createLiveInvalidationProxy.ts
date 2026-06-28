@@ -1,6 +1,6 @@
 import type { AnyRouter } from "@trpc/server";
 import type {
-  LiveInvalidateOptions,
+  PublishInvalidationInput,
   TrpcInvalidationTarget,
 } from "../shared/types";
 import { createInvalidationEngine } from "./batch";
@@ -30,23 +30,28 @@ function targetForPath(
   return { scope: "procedure", path: dotted };
 }
 
+function resolvePublish(
+  options: CreateLiveInvalidationProxyOptions,
+): (input: PublishInvalidationInput) => unknown {
+  if ("hub" in options) return (input) => options.hub.publish(input);
+  return options.publish;
+}
+
 /**
  * Create the backend invalidation proxy. Mirrors the mental model of tRPC's
  * client-side `utils.*.invalidate()` helpers, but runs on the server and emits
- * events instead of touching a local cache.
+ * events (via the hub) instead of touching a local cache.
  *
  * ```ts
- * const live = createLiveInvalidationProxy<AppRouter>({
- *   publish: (event) => liveServer.publish(event),
- * });
- *
+ * const live = createLiveInvalidationProxy<AppRouter>({ hub });
  * await live.response.list.invalidate({ requestId });
  * ```
  */
 export function createLiveInvalidationProxy<TRouter extends AnyRouter>(
   options: CreateLiveInvalidationProxyOptions,
 ): LiveInvalidationProxy<TRouter> {
-  const engine = createInvalidationEngine((input) => options.publish(input));
+  const publish = resolvePublish(options);
+  const engine = createInvalidationEngine((input) => publish(input));
 
   function node(path: string[]): unknown {
     return new Proxy(PROXY_TARGET, {
@@ -56,33 +61,19 @@ export function createLiveInvalidationProxy<TRouter extends AnyRouter>(
         if (prop === "then") return undefined;
 
         if (prop === "invalidate") {
-          return (a?: unknown, b?: unknown): Promise<void> => {
-            // For root / router nodes the first arg is options; for procedure
-            // nodes it is the (optional) query input.
+          return (input?: unknown): Promise<void> => {
+            // Root / router nodes take no input; procedure nodes take an
+            // optional query input.
             if (path.length <= 1) {
-              return engine.emit(
-                targetForPath(path, false, undefined),
-                (a as LiveInvalidateOptions | undefined) ?? {},
-              );
+              return engine.emit(targetForPath(path, false, undefined));
             }
-            return engine.emit(
-              targetForPath(path, a !== undefined, a),
-              (b as LiveInvalidateOptions | undefined) ?? {},
-            );
+            return engine.emit(targetForPath(path, input !== undefined, input));
           };
         }
 
         if (prop === "batch" && path.length === 0) {
-          return (a?: unknown, b?: unknown): Promise<unknown> => {
-            if (typeof a === "function") {
-              return engine.runBatch({}, a as () => Promise<unknown>);
-            }
-            return engine.runBatch(
-              (a as LiveInvalidateOptions | undefined) ?? {},
-              (b as (() => Promise<unknown>) | undefined) ??
-                (async () => undefined),
-            );
-          };
+          return (callback: () => Promise<unknown>): Promise<unknown> =>
+            engine.runBatch(callback);
         }
 
         return node([...path, prop]);
