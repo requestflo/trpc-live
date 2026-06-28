@@ -37,13 +37,15 @@ function invalidationEvent() {
 }
 
 /**
- * Wire a controllable transport through createLiveOperationLink and return an
- * `emit` that pushes raw link-layer envelopes (the shape httpSubscriptionLink
- * actually produces).
+ * Wire a controllable transport (on subscription path `opPath`) through
+ * createLiveOperationLink and return an `emit` that pushes raw link-layer
+ * envelopes (the shape httpSubscriptionLink actually produces). `linkPath`
+ * optionally restricts which subscription is tapped (default: all).
  */
 function setupTap(
-  path: string,
+  opPath: string,
   queryClient: ReturnType<typeof createTestQueryClient>,
+  linkPath?: string,
 ) {
   let producer: { next: (value: unknown) => void } | undefined;
   const transport = (() =>
@@ -52,11 +54,10 @@ function setupTap(
       return () => undefined;
     })) as never;
 
-  const link = createLiveOperationLink(transport, {
-    queryClient,
-    path: "live.invalidations",
-  });
-  const out$ = link({ op: subOp(path) as never, next: noopNext });
+  const config =
+    linkPath !== undefined ? { queryClient, path: linkPath } : { queryClient };
+  const link = createLiveOperationLink(transport, config);
+  const out$ = link({ op: subOp(opPath) as never, next: noopNext });
   out$.subscribe({});
 
   return { emit: (value: unknown) => producer?.next(value) };
@@ -85,7 +86,18 @@ describe("createLiveOperationLink", () => {
     expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
-  it("ignores lifecycle messages (started / state)", () => {
+  it("applies invalidation events arriving on any subscription by default", () => {
+    const queryClient = createTestQueryClient();
+    const key = keyFor(trpc.response.list, { requestId: "r" }, "query");
+    queryClient.setQueryData(key, []);
+
+    const { emit } = setupTap("chat.messages", queryClient);
+    emit({ result: { data: invalidationEvent() } });
+
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  it("ignores lifecycle messages (started / state / stopped)", () => {
     const queryClient = createTestQueryClient();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
 
@@ -97,7 +109,7 @@ describe("createLiveOperationLink", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("passes other subscriptions through untouched", () => {
+  it("ignores non-invalidation subscription data", () => {
     const queryClient = createTestQueryClient();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
 
@@ -107,9 +119,20 @@ describe("createLiveOperationLink", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("only taps the configured path when one is given", () => {
+    const queryClient = createTestQueryClient();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+
+    // Restrict to live.invalidations, but the event arrives on chat.messages.
+    const { emit } = setupTap("chat.messages", queryClient, "live.invalidations");
+    emit({ result: { data: invalidationEvent() } });
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
   it("is a pass-through with no queryClient", () => {
     const transport = (() => observable(() => undefined)) as never;
-    const link = createLiveOperationLink(transport, { path: "live.invalidations" });
+    const link = createLiveOperationLink(transport, {});
     const out$ = link({ op: subOp("live.invalidations") as never, next: noopNext });
     expect(() => out$.subscribe({})).not.toThrow();
   });
@@ -121,6 +144,17 @@ describe("liveLink", () => {
   it("is a tRPC link factory", () => {
     const link = liveLink({ url: "/api/trpc" });
     expect(typeof link).toBe("function");
+    expect(typeof link({})).toBe("function");
+  });
+
+  it("accepts queryClient, path, and debug options", () => {
+    const link = liveLink({
+      url: "/api/trpc",
+      queryClient: createTestQueryClient(),
+      path: "live.invalidations",
+      debug: true,
+      EventSource: MockEventSource as never,
+    });
     expect(typeof link({})).toBe("function");
   });
 

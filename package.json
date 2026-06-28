@@ -1,7 +1,7 @@
 {
   "name": "@requestflo/trpc-live",
   "version": "0.2.0",
-  "description": "A drop-in replacement for tRPC's httpSubscriptionLink that also applies server-driven query invalidations to your TanStack Query cache.",
+  "description": "A drop-in replacement for tRPC's httpSubscriptionLink that applies server-driven query invalidations to your TanStack Query cache. Just a client link — no server helpers.",
   "type": "module",
   "sideEffects": false,
   "license": "MIT",
@@ -23,11 +23,6 @@
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",
       "require": "./dist/client/index.cjs"
-    },
-    "./server": {
-      "types": "./dist/server/index.d.ts",
-      "import": "./dist/server/index.js",
-      "require": "./dist/server/index.cjs"
     },
     "./shared": {
       "types": "./dist/shared/index.d.ts",

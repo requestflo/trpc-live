@@ -3,7 +3,6 @@ export type {
   TrpcInvalidationScope,
   TrpcInvalidationTarget,
   TrpcLiveInvalidationEvent,
-  PublishInvalidationInput,
 } from "./types";
 
 export {

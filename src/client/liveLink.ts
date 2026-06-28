@@ -3,22 +3,26 @@ import type { Operation, TRPCLink } from "@trpc/client";
 import type { AnyRouter } from "@trpc/server";
 import { tap } from "@trpc/server/observable";
 import type { QueryClient } from "@tanstack/react-query";
-import { DEFAULT_LIVE_PATH } from "../shared/constants";
 import { applyInvalidationEvent } from "./applyInvalidationEvent";
 
 type HttpSubscriptionLinkOptions = Parameters<typeof httpSubscriptionLink>[0];
 
 /**
- * Options for {@link liveLink}. A superset of `httpSubscriptionLink`'s options:
- * pass `queryClient` to enable automatic cache invalidation. With no
- * `queryClient` it behaves exactly like `httpSubscriptionLink`.
+ * Options for {@link liveLink}. A superset of `httpSubscriptionLink`'s options
+ * (`url`, `transformer`, `connectionParams`, `EventSource`, …): pass
+ * `queryClient` to enable automatic cache invalidation. With no `queryClient`
+ * it behaves exactly like `httpSubscriptionLink`.
  */
 export type LiveLinkOptions = HttpSubscriptionLinkOptions & {
-  /** Applying invalidation events requires the QueryClient your app renders with. */
+  /** The QueryClient your app renders with. Required to apply invalidations. */
   queryClient?: QueryClient;
-  /** Path of the invalidation subscription to tap. Defaults to `live.invalidations`. */
+  /**
+   * Restrict invalidation to a single subscription path (e.g.
+   * `"live.invalidations"`). Omit to apply `trpc.invalidate` events arriving on
+   * any subscription.
+   */
   path?: string;
-  /** Log ignored payloads / errors to the console. */
+  /** Log ignored payloads to the console. */
   debug?: boolean;
 };
 
@@ -34,30 +38,33 @@ export type CreateLiveOperationLinkConfig = {
 };
 
 /**
- * Wrap a subscription transport operation-link so that data from the
- * invalidation subscription (at `path`) is applied to the QueryClient as it
- * streams. All other operations pass through untouched. Exported for testing.
+ * Wrap a subscription transport operation-link so that `trpc.invalidate` events
+ * streaming over a subscription are applied to the QueryClient. All operation
+ * data still passes through untouched. Exported for testing.
  */
 export function createLiveOperationLink(
   transport: AnyOperationLink,
   config: CreateLiveOperationLinkConfig,
 ): AnyOperationLink {
-  const { queryClient, path = DEFAULT_LIVE_PATH, debug } = config;
+  const { queryClient, path, debug } = config;
 
   return ({ op, next }) => {
     const result$ = transport({ op, next });
-    if (!queryClient || op.type !== "subscription" || op.path !== path) {
-      return result$;
-    }
+
+    const shouldTap =
+      !!queryClient &&
+      op.type === "subscription" &&
+      (path === undefined || op.path === path);
+    if (!shouldTap) return result$;
 
     return result$.pipe(
       tap({
         next(envelope) {
-          // httpSubscriptionLink data envelopes carry a `data` field and have
-          // no lifecycle `type` ("state" | "started" | "stopped"); tracked
-          // events additionally carry an `id`. Lifecycle messages (which have a
-          // `type`) are ignored. `applyInvalidationEvent` re-validates the
-          // payload, so non-invalidation data is safely dropped.
+          // httpSubscriptionLink data envelopes carry a `data` field and no
+          // lifecycle `type` ("state" | "started" | "stopped"); tracked events
+          // additionally carry an `id`. Lifecycle messages are skipped, and
+          // `applyInvalidationEvent` re-validates so non-invalidation data is
+          // safely ignored.
           const result = (
             envelope as { result?: { type?: string; data?: unknown } }
           ).result;
@@ -77,8 +84,9 @@ export function createLiveOperationLink(
 /**
  * A drop-in replacement for tRPC's `httpSubscriptionLink`. It transports
  * subscriptions over SSE exactly like `httpSubscriptionLink`, and — when given
- * a `queryClient` — automatically applies `trpc.invalidate` events from the
- * `live.invalidations` subscription to your TanStack Query cache.
+ * a `queryClient` — applies `trpc.invalidate` events streaming over your
+ * subscriptions to the TanStack Query cache. No server helpers, no provider:
+ * the link does the work.
  *
  * ```ts
  * createTRPCClient<AppRouter>({
@@ -92,19 +100,18 @@ export function createLiveOperationLink(
  * });
  * ```
  *
- * Run the invalidation subscription once (e.g.
- * `trpc.live.invalidations.useSubscription(undefined)`); this link applies the
- * events it carries. Reconnection is handled by `httpSubscriptionLink`; nothing
- * special happens on reconnect (events missed while offline are not replayed).
+ * Reconnection is handled by `httpSubscriptionLink`; nothing special happens on
+ * reconnect (events missed while offline are not replayed).
  */
 export function liveLink<TRouter extends AnyRouter = AnyRouter>(
   opts: LiveLinkOptions,
 ): TRPCLink<TRouter> {
-  const { queryClient, path = DEFAULT_LIVE_PATH, debug, ...httpOpts } = opts;
+  const { queryClient, path, debug, ...httpOpts } = opts;
   const transportLink = httpSubscriptionLink(httpOpts) as unknown as TRPCLink<TRouter>;
 
-  const config: CreateLiveOperationLinkConfig = { path };
+  const config: CreateLiveOperationLinkConfig = {};
   if (queryClient) config.queryClient = queryClient;
+  if (path !== undefined) config.path = path;
   if (debug !== undefined) config.debug = debug;
 
   return (runtime) =>

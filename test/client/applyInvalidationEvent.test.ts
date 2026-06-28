@@ -75,4 +75,19 @@ describe("applyInvalidationEvent", () => {
     expect(result).toBeNull();
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it("logs ignored events when debug is enabled", () => {
+    const queryClient = createTestQueryClient();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const result = applyInvalidationEvent({
+      queryClient,
+      event: { type: "not.this" },
+      debug: true,
+    });
+
+    expect(result).toBeNull();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
 });

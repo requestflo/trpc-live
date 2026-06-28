@@ -94,4 +94,19 @@ describe("invalidateTarget", () => {
 
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it("swallows invalidateQueries errors (with debug logging)", () => {
+    const qc = createTestQueryClient();
+    vi.spyOn(qc, "invalidateQueries").mockImplementation(() => {
+      throw new Error("boom");
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    expect(() =>
+      invalidateTarget({ queryClient: qc, target: { scope: "all" }, debug: true }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+
+    warn.mockRestore();
+  });
 });

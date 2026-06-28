@@ -34,18 +34,13 @@ export type TrpcInvalidationTarget =
     };
 
 /**
- * The event streamed to clients over the tRPC `live` subscription. Plain and
- * untracked — there is no buffering or replay, so it carries no event-id
- * resume semantics beyond a unique `id` for logging/dedupe.
+ * The event a subscription streams to clients. `liveLink` validates incoming
+ * payloads against this shape and applies their targets to the cache.
+ * Plain and untracked — there is no buffering or replay.
  */
 export type TrpcLiveInvalidationEvent = {
   id: string;
   type: TrpcLiveEventType;
   targets: TrpcInvalidationTarget[];
   createdAt: string;
-};
-
-/** Input accepted by the hub's `publish()` and the proxy's `publish` callback. */
-export type PublishInvalidationInput = {
-  targets: TrpcInvalidationTarget[];
 };
