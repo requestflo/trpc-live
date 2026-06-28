@@ -1,12 +1,18 @@
 import { expectAssignable } from "tsd";
 import { initTRPC } from "@trpc/server";
-import type { TRPCLink } from "@trpc/client";
+import { httpSubscriptionLink, type TRPCLink } from "@trpc/client";
 import { liveLink } from "../../src/client";
 import { createLiveHub, createLiveProcedure } from "../../src/server";
 import type { AppRouter } from "../fixtures/appRouter";
 
 // liveLink is a drop-in for httpSubscriptionLink: same options, produces a TRPCLink.
 expectAssignable<TRPCLink<AppRouter>>(liveLink<AppRouter>({ url: "/api/trpc" }));
+
+// Drop-in contract: every httpSubscriptionLink options object is also a valid
+// liveLink options object (url, transformer, connectionParams, EventSource, …).
+type HttpSubscriptionLinkOptions = Parameters<typeof httpSubscriptionLink>[0];
+type LiveLinkOptionsArg = Parameters<typeof liveLink>[0];
+expectAssignable<LiveLinkOptionsArg>({ url: "/api/trpc" } as HttpSubscriptionLinkOptions);
 
 // It accepts the extra queryClient/path/debug options.
 expectAssignable<TRPCLink<AppRouter>>(

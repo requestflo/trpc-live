@@ -29,25 +29,30 @@ export function liveInvalidations(
         wake = null;
       });
 
-      const onAbort = () => {
-        wake?.();
-        wake = null;
-      };
-      signal?.addEventListener("abort", onAbort);
-
+      // `off()` runs no matter what happens after subscribing (including if
+      // wiring up the abort listener throws), so the hub never leaks a listener.
       try {
-        while (!signal?.aborted) {
-          if (queue.length > 0) {
-            yield queue.shift()!;
-            continue;
+        const onAbort = () => {
+          wake?.();
+          wake = null;
+        };
+        signal?.addEventListener("abort", onAbort);
+
+        try {
+          while (!signal?.aborted) {
+            if (queue.length > 0) {
+              yield queue.shift()!;
+              continue;
+            }
+            await new Promise<void>((resolve) => {
+              wake = resolve;
+            });
           }
-          await new Promise<void>((resolve) => {
-            wake = resolve;
-          });
+        } finally {
+          signal?.removeEventListener("abort", onAbort);
         }
       } finally {
         off();
-        signal?.removeEventListener("abort", onAbort);
       }
     },
   };

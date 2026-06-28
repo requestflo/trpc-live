@@ -53,9 +53,15 @@ export function createLiveOperationLink(
     return result$.pipe(
       tap({
         next(envelope) {
-          const result = (envelope as { result?: { type?: string; data?: unknown } })
-            .result;
-          if (result && (result.type === "data" || result.type === undefined)) {
+          // httpSubscriptionLink data envelopes carry a `data` field and have
+          // no lifecycle `type` ("state" | "started" | "stopped"); tracked
+          // events additionally carry an `id`. Lifecycle messages (which have a
+          // `type`) are ignored. `applyInvalidationEvent` re-validates the
+          // payload, so non-invalidation data is safely dropped.
+          const result = (
+            envelope as { result?: { type?: string; data?: unknown } }
+          ).result;
+          if (result && result.type === undefined) {
             applyInvalidationEvent({
               queryClient,
               event: result.data,

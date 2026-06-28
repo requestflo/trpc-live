@@ -36,50 +36,74 @@ function invalidationEvent() {
   };
 }
 
+/**
+ * Wire a controllable transport through createLiveOperationLink and return an
+ * `emit` that pushes raw link-layer envelopes (the shape httpSubscriptionLink
+ * actually produces).
+ */
+function setupTap(
+  path: string,
+  queryClient: ReturnType<typeof createTestQueryClient>,
+) {
+  let producer: { next: (value: unknown) => void } | undefined;
+  const transport = (() =>
+    observable((obs) => {
+      producer = obs as unknown as { next: (value: unknown) => void };
+      return () => undefined;
+    })) as never;
+
+  const link = createLiveOperationLink(transport, {
+    queryClient,
+    path: "live.invalidations",
+  });
+  const out$ = link({ op: subOp(path) as never, next: noopNext });
+  out$.subscribe({});
+
+  return { emit: (value: unknown) => producer?.next(value) };
+}
+
 describe("createLiveOperationLink", () => {
-  it("applies invalidation events from the tapped subscription", () => {
+  it("applies a data envelope (no `type` field, as httpSubscriptionLink emits)", () => {
     const queryClient = createTestQueryClient();
     const key = keyFor(trpc.response.list, { requestId: "r" }, "query");
     queryClient.setQueryData(key, []);
 
-    let producer: { next: (value: unknown) => void } | undefined;
-    const transport = (() =>
-      observable((obs) => {
-        producer = obs as unknown as { next: (value: unknown) => void };
-        return () => undefined;
-      })) as never;
-
-    const link = createLiveOperationLink(transport, {
-      queryClient,
-      path: "live.invalidations",
-    });
-    const out$ = link({ op: subOp("live.invalidations") as never, next: noopNext });
-    out$.subscribe({});
-
-    producer?.next({ result: { type: "data", data: invalidationEvent() } });
+    const { emit } = setupTap("live.invalidations", queryClient);
+    emit({ result: { data: invalidationEvent() } });
 
     expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  it("applies a tracked data envelope (with an `id` field)", () => {
+    const queryClient = createTestQueryClient();
+    const key = keyFor(trpc.response.list, { requestId: "r" }, "query");
+    queryClient.setQueryData(key, []);
+
+    const { emit } = setupTap("live.invalidations", queryClient);
+    emit({ result: { id: "evt_123", data: invalidationEvent() } });
+
+    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  it("ignores lifecycle messages (started / state)", () => {
+    const queryClient = createTestQueryClient();
+    const spy = vi.spyOn(queryClient, "invalidateQueries");
+
+    const { emit } = setupTap("live.invalidations", queryClient);
+    emit({ result: { type: "started" }, context: {} });
+    emit({ result: { type: "state", state: "connecting", error: null } });
+    emit({ result: { type: "stopped" } });
+
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("passes other subscriptions through untouched", () => {
     const queryClient = createTestQueryClient();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
 
-    let producer: { next: (value: unknown) => void } | undefined;
-    const transport = (() =>
-      observable((obs) => {
-        producer = obs as unknown as { next: (value: unknown) => void };
-        return () => undefined;
-      })) as never;
+    const { emit } = setupTap("chat.messages", queryClient);
+    emit({ result: { data: { hello: "world" } } });
 
-    const link = createLiveOperationLink(transport, {
-      queryClient,
-      path: "live.invalidations",
-    });
-    const out$ = link({ op: subOp("chat.messages") as never, next: noopNext });
-    out$.subscribe({});
-
-    producer?.next({ result: { type: "data", data: { hello: "world" } } });
     expect(spy).not.toHaveBeenCalled();
   });
 
