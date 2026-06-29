@@ -6,7 +6,7 @@ import * as shared from "../src/shared";
 describe("public entry points", () => {
   it("exposes the client API (headline: liveLink)", () => {
     expect(typeof client.liveLink).toBe("function");
-    expect(typeof client.createLiveOperationLink).toBe("function");
+    expect(typeof client.openInvalidationStream).toBe("function");
     expect(typeof client.invalidateTarget).toBe("function");
     expect(typeof client.applyInvalidationEvent).toBe("function");
     expect(typeof client.parseInvalidationEvent).toBe("function");

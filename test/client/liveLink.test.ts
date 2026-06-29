@@ -1,9 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  createTRPCClient,
+  httpBatchLink,
+  splitLink,
+} from "@trpc/client";
 import { observable } from "@trpc/server/observable";
 import { getQueryKey } from "@trpc/react-query";
-import { createLiveOperationLink, liveLink } from "../../src/client/liveLink";
+import { liveLink, openInvalidationStream } from "../../src/client/liveLink";
 import { createTestQueryClient } from "../fixtures/queryClient";
 import { trpc } from "../fixtures/trpcClient";
+import type { AppRouter } from "../fixtures/appRouter";
 import { MockEventSource } from "../utils/mockEventSource";
 
 const keyFor = getQueryKey as unknown as (
@@ -12,18 +18,7 @@ const keyFor = getQueryKey as unknown as (
   type?: "query",
 ) => readonly unknown[];
 
-function subOp(path: string) {
-  return {
-    id: 1,
-    type: "subscription" as const,
-    path,
-    input: undefined,
-    context: {},
-    signal: null,
-  };
-}
-
-const noopNext = (() => observable(() => undefined)) as never;
+const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 function invalidationEvent() {
   return {
@@ -37,104 +32,103 @@ function invalidationEvent() {
 }
 
 /**
- * Wire a controllable transport (on subscription path `opPath`) through
- * createLiveOperationLink and return an `emit` that pushes raw link-layer
- * envelopes (the shape httpSubscriptionLink actually produces). `linkPath`
- * optionally restricts which subscription is tapped (default: all).
+ * A controllable operation-link standing in for httpSubscriptionLink, emitting
+ * the raw link-layer envelopes httpSubscriptionLink actually produces.
  */
-function setupTap(
-  opPath: string,
-  queryClient: ReturnType<typeof createTestQueryClient>,
-  linkPath?: string,
-) {
-  let producer: { next: (value: unknown) => void } | undefined;
-  const transport = (() =>
-    observable((obs) => {
-      producer = obs as unknown as { next: (value: unknown) => void };
+function controllableTransport() {
+  const captured: {
+    op?: { path: string; type: string };
+    next?: (op: unknown) => unknown;
+  } = {};
+  let producer:
+    | { next: (value: unknown) => void; error: (err: unknown) => void }
+    | undefined;
+  const transport = ((opts: {
+    op: { path: string; type: string };
+    next: (op: unknown) => unknown;
+  }) => {
+    captured.op = opts.op;
+    captured.next = opts.next;
+    return observable((obs) => {
+      producer = obs as unknown as {
+        next: (value: unknown) => void;
+        error: (err: unknown) => void;
+      };
       return () => undefined;
-    })) as never;
-
-  const config =
-    linkPath !== undefined ? { queryClient, path: linkPath } : { queryClient };
-  const link = createLiveOperationLink(transport, config);
-  const out$ = link({ op: subOp(opPath) as never, next: noopNext });
-  out$.subscribe({});
-
-  return { emit: (value: unknown) => producer?.next(value) };
+    });
+  }) as never;
+  return {
+    transport,
+    captured,
+    emit: (v: unknown) => producer?.next(v),
+    fail: (e: unknown) => producer?.error(e),
+  };
 }
 
-describe("createLiveOperationLink", () => {
-  it("applies a data envelope (no `type` field, as httpSubscriptionLink emits)", () => {
+describe("openInvalidationStream", () => {
+  it("opens a subscription at the configured path and applies data envelopes", () => {
     const queryClient = createTestQueryClient();
     const key = keyFor(trpc.response.list, { requestId: "r" }, "query");
     queryClient.setQueryData(key, []);
 
-    const { emit } = setupTap("live.invalidations", queryClient);
+    const { transport, captured, emit } = controllableTransport();
+    const handle = openInvalidationStream(transport, {
+      queryClient,
+      path: "live.invalidations",
+    });
+
+    expect(captured.op?.type).toBe("subscription");
+    expect(captured.op?.path).toBe("live.invalidations");
+    expect(typeof handle.unsubscribe).toBe("function");
+
     emit({ result: { data: invalidationEvent() } });
-
     expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
-  it("applies a tracked data envelope (with an `id` field)", () => {
+  it("applies tracked data envelopes (with an `id` field)", () => {
     const queryClient = createTestQueryClient();
     const key = keyFor(trpc.response.list, { requestId: "r" }, "query");
     queryClient.setQueryData(key, []);
 
-    const { emit } = setupTap("live.invalidations", queryClient);
-    emit({ result: { id: "evt_123", data: invalidationEvent() } });
+    const { transport, emit } = controllableTransport();
+    openInvalidationStream(transport, { queryClient });
 
+    emit({ result: { id: "evt_9", data: invalidationEvent() } });
     expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
   });
 
-  it("applies invalidation events arriving on any subscription by default", () => {
-    const queryClient = createTestQueryClient();
-    const key = keyFor(trpc.response.list, { requestId: "r" }, "query");
-    queryClient.setQueryData(key, []);
-
-    const { emit } = setupTap("chat.messages", queryClient);
-    emit({ result: { data: invalidationEvent() } });
-
-    expect(queryClient.getQueryState(key)?.isInvalidated).toBe(true);
-  });
-
-  it("ignores lifecycle messages (started / state / stopped)", () => {
+  it("ignores lifecycle messages and non-invalidation data", () => {
     const queryClient = createTestQueryClient();
     const spy = vi.spyOn(queryClient, "invalidateQueries");
 
-    const { emit } = setupTap("live.invalidations", queryClient);
-    emit({ result: { type: "started" }, context: {} });
+    const { transport, emit } = controllableTransport();
+    openInvalidationStream(transport, { queryClient });
+
+    emit({ result: { type: "started" } });
     emit({ result: { type: "state", state: "connecting", error: null } });
     emit({ result: { type: "stopped" } });
-
-    expect(spy).not.toHaveBeenCalled();
-  });
-
-  it("ignores non-invalidation subscription data", () => {
-    const queryClient = createTestQueryClient();
-    const spy = vi.spyOn(queryClient, "invalidateQueries");
-
-    const { emit } = setupTap("chat.messages", queryClient);
     emit({ result: { data: { hello: "world" } } });
 
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("only taps the configured path when one is given", () => {
-    const queryClient = createTestQueryClient();
-    const spy = vi.spyOn(queryClient, "invalidateQueries");
+  it("logs stream errors when debug is enabled", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { transport, fail } = controllableTransport();
+    openInvalidationStream(transport, {
+      queryClient: createTestQueryClient(),
+      debug: true,
+    });
 
-    // Restrict to live.invalidations, but the event arrives on chat.messages.
-    const { emit } = setupTap("chat.messages", queryClient, "live.invalidations");
-    emit({ result: { data: invalidationEvent() } });
-
-    expect(spy).not.toHaveBeenCalled();
+    fail(new Error("dropped"));
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
-  it("is a pass-through with no queryClient", () => {
-    const transport = (() => observable(() => undefined)) as never;
-    const link = createLiveOperationLink(transport, {});
-    const out$ = link({ op: subOp("live.invalidations") as never, next: noopNext });
-    expect(() => out$.subscribe({})).not.toThrow();
+  it("uses a terminating next() (the stream never falls through the chain)", () => {
+    const { transport, captured } = controllableTransport();
+    openInvalidationStream(transport, { queryClient: createTestQueryClient() });
+    expect(() => captured.next?.({})).toThrow();
   });
 });
 
@@ -147,35 +141,51 @@ describe("liveLink", () => {
     expect(typeof link({})).toBe("function");
   });
 
-  it("accepts queryClient, path, and debug options", () => {
-    const link = liveLink({
-      url: "/api/trpc",
-      queryClient: createTestQueryClient(),
-      path: "live.invalidations",
-      debug: true,
-      EventSource: MockEventSource as never,
+  it("auto-opens exactly one SSE connection when given a queryClient", async () => {
+    const client = createTRPCClient<AppRouter>({
+      links: [
+        liveLink({
+          url: "/api/trpc",
+          queryClient: createTestQueryClient(),
+          EventSource: MockEventSource as never,
+        }),
+      ],
     });
-    expect(typeof link({})).toBe("function");
-  });
+    expect(client).toBeDefined();
 
-  it("delegates subscription transport to httpSubscriptionLink", async () => {
-    const queryClient = createTestQueryClient();
-    const operationLink = liveLink({
-      url: "/api/trpc",
-      queryClient,
-      EventSource: MockEventSource as never,
-    })({});
-
-    const out$ = operationLink({
-      op: subOp("live.invalidations") as never,
-      next: noopNext,
-    });
-    out$.subscribe({});
-
-    // httpSubscriptionLink resolves the URL before constructing the EventSource.
-    await new Promise((resolve) => setTimeout(resolve, 10));
-
+    await tick();
     expect(MockEventSource.instances).toHaveLength(1);
     expect(MockEventSource.instances[0]?.url).toContain("/api/trpc");
+  });
+
+  it("auto-opens one connection when used in splitLink (the drop-in setup)", async () => {
+    const client = createTRPCClient<AppRouter>({
+      links: [
+        splitLink({
+          condition: (op) => op.type === "subscription",
+          true: liveLink({
+            url: "/api/trpc",
+            queryClient: createTestQueryClient(),
+            EventSource: MockEventSource as never,
+          }),
+          false: httpBatchLink({ url: "/api/trpc" }),
+        }),
+      ],
+    });
+    expect(client).toBeDefined();
+
+    await tick();
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it("opens no connection without a queryClient (pure httpSubscriptionLink)", async () => {
+    createTRPCClient<AppRouter>({
+      links: [
+        liveLink({ url: "/api/trpc", EventSource: MockEventSource as never }),
+      ],
+    });
+
+    await tick();
+    expect(MockEventSource.instances).toHaveLength(0);
   });
 });

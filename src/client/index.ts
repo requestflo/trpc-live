@@ -1,7 +1,7 @@
-export { liveLink, createLiveOperationLink } from "./liveLink";
+export { liveLink, openInvalidationStream } from "./liveLink";
 export type {
   LiveLinkOptions,
-  CreateLiveOperationLinkConfig,
+  OpenInvalidationStreamConfig,
 } from "./liveLink";
 
 export { invalidateTarget } from "./invalidateTarget";

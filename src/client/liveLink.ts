@@ -1,8 +1,8 @@
 import { httpSubscriptionLink } from "@trpc/client";
 import type { Operation, TRPCLink } from "@trpc/client";
 import type { AnyRouter } from "@trpc/server";
-import { tap } from "@trpc/server/observable";
 import type { QueryClient } from "@tanstack/react-query";
+import { DEFAULT_LIVE_PATH } from "../shared/constants";
 import { applyInvalidationEvent } from "./applyInvalidationEvent";
 
 type HttpSubscriptionLinkOptions = Parameters<typeof httpSubscriptionLink>[0];
@@ -16,77 +16,99 @@ type HttpSubscriptionLinkOptions = Parameters<typeof httpSubscriptionLink>[0];
 export type LiveLinkOptions = HttpSubscriptionLinkOptions & {
   /** The QueryClient your app renders with. Required to apply invalidations. */
   queryClient?: QueryClient;
-  /**
-   * Restrict invalidation to a single subscription path (e.g.
-   * `"live.invalidations"`). Omit to apply `trpc.invalidate` events arriving on
-   * any subscription.
-   */
+  /** Path of the invalidation subscription to open. Defaults to `live.invalidations`. */
   path?: string;
-  /** Log ignored payloads to the console. */
+  /** Log ignored payloads / stream errors to the console. */
   debug?: boolean;
 };
 
+type ResultObserver = {
+  next: (value: unknown) => void;
+  error: (err: unknown) => void;
+  complete: () => void;
+};
+type ResultObservable = {
+  subscribe: (observer: Partial<ResultObserver>) => { unsubscribe: () => void };
+};
 type AnyOperationLink = (opts: {
   op: Operation;
-  next: (op: Operation) => ReturnType<ReturnType<TRPCLink<AnyRouter>>>;
-}) => ReturnType<ReturnType<TRPCLink<AnyRouter>>>;
+  next: (op: Operation) => ResultObservable;
+}) => ResultObservable;
 
-export type CreateLiveOperationLinkConfig = {
-  queryClient?: QueryClient;
+export type OpenInvalidationStreamConfig = {
+  queryClient: QueryClient;
   path?: string;
   debug?: boolean;
 };
 
+// httpSubscriptionLink is terminating, so it never calls `next`.
+const TERMINATING_NEXT = (() => {
+  throw new Error(
+    "[trpc-live] the invalidation stream reached the end of the link chain",
+  );
+}) as never;
+
 /**
- * Wrap a subscription transport operation-link so that `trpc.invalidate` events
- * streaming over a subscription are applied to the QueryClient. All operation
- * data still passes through untouched. Exported for testing.
+ * Open one subscription through `operationLink` and apply the `trpc.invalidate`
+ * events it streams to the QueryClient. Returns an `unsubscribe` handle.
+ * Exported for advanced/manual use and testing.
  */
-export function createLiveOperationLink(
-  transport: AnyOperationLink,
-  config: CreateLiveOperationLinkConfig,
-): AnyOperationLink {
-  const { queryClient, path, debug } = config;
+export function openInvalidationStream(
+  operationLink: AnyOperationLink,
+  config: OpenInvalidationStreamConfig,
+): { unsubscribe: () => void } {
+  const { queryClient, path = DEFAULT_LIVE_PATH, debug } = config;
 
-  return ({ op, next }) => {
-    const result$ = transport({ op, next });
-
-    const shouldTap =
-      !!queryClient &&
-      op.type === "subscription" &&
-      (path === undefined || op.path === path);
-    if (!shouldTap) return result$;
-
-    return result$.pipe(
-      tap({
-        next(envelope) {
-          // httpSubscriptionLink data envelopes carry a `data` field and no
-          // lifecycle `type` ("state" | "started" | "stopped"); tracked events
-          // additionally carry an `id`. Lifecycle messages are skipped, and
-          // `applyInvalidationEvent` re-validates so non-invalidation data is
-          // safely ignored.
-          const result = (
-            envelope as { result?: { type?: string; data?: unknown } }
-          ).result;
-          if (result && result.type === undefined) {
-            applyInvalidationEvent({
-              queryClient,
-              event: result.data,
-              ...(debug !== undefined ? { debug } : {}),
-            });
-          }
-        },
-      }),
-    );
+  const op: Operation = {
+    id: 0,
+    type: "subscription",
+    path,
+    input: undefined,
+    context: {},
+    // No external abort: the stream lives for the client's lifetime.
+    signal: undefined,
   };
+
+  const result$ = operationLink({ op, next: TERMINATING_NEXT });
+
+  return result$.subscribe({
+    next(value) {
+      // httpSubscriptionLink data envelopes carry a `data` field and no
+      // lifecycle `type` ("state" | "started" | "stopped"); tracked events add
+      // an `id`. `applyInvalidationEvent` re-validates, so non-invalidation
+      // data is safely ignored.
+      const result = (value as { result?: { type?: string; data?: unknown } })
+        .result;
+      if (result && result.type === undefined) {
+        applyInvalidationEvent({
+          queryClient,
+          event: result.data,
+          ...(debug !== undefined ? { debug } : {}),
+        });
+      }
+    },
+    error(err) {
+      if (debug) {
+        // eslint-disable-next-line no-console
+        console.warn("[trpc-live] invalidation stream error", err);
+      }
+    },
+  });
+}
+
+function resolveEventSource(opts: HttpSubscriptionLinkOptions): unknown {
+  return (
+    (opts as { EventSource?: unknown }).EventSource ??
+    (globalThis as { EventSource?: unknown }).EventSource
+  );
 }
 
 /**
  * A drop-in replacement for tRPC's `httpSubscriptionLink`. It transports
  * subscriptions over SSE exactly like `httpSubscriptionLink`, and — when given
- * a `queryClient` — applies `trpc.invalidate` events streaming over your
- * subscriptions to the TanStack Query cache. No server helpers, no provider:
- * the link does the work.
+ * a `queryClient` — **opens and owns one invalidation subscription itself** as
+ * soon as the client is created, applying `trpc.invalidate` events to the
+ * TanStack Query cache. No provider, no `useSubscription`, no server helpers.
  *
  * ```ts
  * createTRPCClient<AppRouter>({
@@ -100,23 +122,44 @@ export function createLiveOperationLink(
  * });
  * ```
  *
- * Reconnection is handled by `httpSubscriptionLink`; nothing special happens on
- * reconnect (events missed while offline are not replayed).
+ * The invalidation connection is opened once and kept open for the client's
+ * lifetime (`httpSubscriptionLink` reconnects automatically; nothing is
+ * replayed on reconnect). With no `queryClient`, this is exactly
+ * `httpSubscriptionLink`.
  */
 export function liveLink<TRouter extends AnyRouter = AnyRouter>(
   opts: LiveLinkOptions,
 ): TRPCLink<TRouter> {
-  const { queryClient, path, debug, ...httpOpts } = opts;
+  const { queryClient, path = DEFAULT_LIVE_PATH, debug, ...httpOpts } = opts;
   const transportLink = httpSubscriptionLink(httpOpts) as unknown as TRPCLink<TRouter>;
+  let opened = false;
 
-  const config: CreateLiveOperationLinkConfig = {};
-  if (queryClient) config.queryClient = queryClient;
-  if (path !== undefined) config.path = path;
-  if (debug !== undefined) config.debug = debug;
+  return (runtime) => {
+    const operationLink = transportLink(runtime) as unknown as AnyOperationLink;
 
-  return (runtime) =>
-    createLiveOperationLink(
-      transportLink(runtime) as unknown as AnyOperationLink,
-      config,
-    ) as unknown as ReturnType<TRPCLink<TRouter>>;
+    // Open the single invalidation stream once, when the client is built.
+    // Guarded so SSR (no EventSource) is a harmless no-op.
+    if (
+      queryClient &&
+      !opened &&
+      typeof resolveEventSource(httpOpts) === "function"
+    ) {
+      opened = true;
+      try {
+        openInvalidationStream(operationLink, {
+          queryClient,
+          path,
+          ...(debug !== undefined ? { debug } : {}),
+        });
+      } catch (err) {
+        opened = false;
+        if (debug) {
+          // eslint-disable-next-line no-console
+          console.warn("[trpc-live] failed to open invalidation stream", err);
+        }
+      }
+    }
+
+    return operationLink as unknown as ReturnType<TRPCLink<TRouter>>;
+  };
 }
